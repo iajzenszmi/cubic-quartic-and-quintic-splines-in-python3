@@ -1,0 +1,134 @@
+Skip to content
+Chat history
+You said:
+python demo of cubic quartic and quintic splines in weather data processing using synthetic data
+ChatGPT said:
+
+Here’s a self-contained Python demo that generates synthetic weather data, fits cubic, quartic, and quintic smoothing splines, compares their errors, and exports a CSV of predictions. It also shows how to compute derivatives (rates of change), which is common in weather processing.
+
+    Requires: numpy, scipy, matplotlib, pandas
+    Install if needed: pip install numpy scipy matplotlib pandas
+
+# spline_weather_demo.py
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.interpolate import UnivariateSpline
+
+# 1) Synthetic weather signal: hourly temps over 5 days (120 hours)
+rng = np.random.default_rng(42)
+hours = np.arange(0, 5*24, 1, dtype=float)            # hourly
+# Base “true” temperature: diurnal cycle + mild front on day 3 + gentle trend
+true_temp = (
+    18
+    + 6*np.sin(2*np.pi*hours/24 - np.pi/3)            # diurnal cycle
+    + 1.5*np.exp(-0.5*((hours-60)/6)**2)              # short-lived warming front ~ day 3
+    + 0.02*(hours)                                    # slow warming trend
+)
+noise = rng.normal(0.0, 0.9, size=hours.size)         # sensor noise
+obs_temp = true_temp + noise
+
+# Optional: simulate sporadic missing observations (e.g., dropped readings)
+mask = rng.choice([True, False], size=hours.size, p=[0.93, 0.07])
+t_obs = hours[mask]
+y_obs = obs_temp[mask]
+
+# Dense grid for evaluation & plotting
+t_dense = np.linspace(hours.min(), hours.max(), 2000)
+
+# 2) Fit smoothing splines of degree k = 3 (cubic), 4 (quartic), 5 (quintic)
+# Smoothing factor s ≈ sigma^2 * N (classic rule of thumb). Tune as needed.
+sigma2 = np.var(noise)
+s_val = sigma2 * t_obs.size
+
+splines = {}
+preds = {}
+derivs = {}
+for k in (3, 4, 5):
+    spl = UnivariateSpline(t_obs, y_obs, k=k, s=s_val)
+    splines[k] = spl
+    preds[k] = spl(t_dense)
+    derivs[k] = spl.derivative()(t_dense)
+
+# 3) Compare RMSE vs the (unknown in practice) true signal — here we have it
+rmse = {k: np.sqrt(np.mean((preds[k] - np.interp(t_dense, hours, true_temp))**2)) for k in preds}
+
+# 4) Export CSV with side-by-side predictions and derivatives
+df = pd.DataFrame({
+    "t_hour": t_dense,
+    "true_temp": np.interp(t_dense, hours, true_temp),
+    "cubic_temp": preds[3],
+    "quartic_temp": preds[4],
+    "quintic_temp": preds[5],
+    "cubic_dTdt": derivs[3],
+    "quartic_dTdt": derivs[4],
+    "quintic_dTdt": derivs[5],
+})
+df.to_csv("spline_predictions.csv", index=False)
+print("Saved: spline_predictions.csv")
+print("RMSE (°C):", {f"{k}-spline": round(v, 3) for k, v in rmse.items()})
+
+# 5) Plots (keep each chart in its own figure; do not set colors)
+# (a) Observations vs. the three spline fits
+plt.figure()
+plt.scatter(t_obs, y_obs, s=12, alpha=0.6, label="Observations")
+plt.plot(t_dense, preds[3], label="Cubic spline (k=3)")
+plt.plot(t_dense, preds[4], label="Quartic spline (k=4)")
+plt.plot(t_dense, preds[5], label="Quintic spline (k=5)")
+plt.plot(hours, true_temp, linewidth=1, alpha=0.7, label="True signal")
+plt.xlabel("Hour")
+plt.ylabel("Temperature (°C)")
+plt.title("Weather Smoothing Splines: Cubic vs Quartic vs Quintic")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# (b) First derivatives (rate of change), useful for fronts/gradients
+plt.figure()
+plt.plot(t_dense, derivs[3], label="Cubic dT/dt")
+plt.plot(t_dense, derivs[4], label="Quartic dT/dt")
+plt.plot(t_dense, derivs[5], label="Quintic dT/dt")
+plt.xlabel("Hour")
+plt.ylabel("dT/dt (°C/hour)")
+plt.title("Spline-derived Temperature Tendencies")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# (c) Zoomed residuals (fit – obs) at observation points for each k
+# Evaluate splines exactly on t_obs
+residuals = {k: splines[k](t_obs) - y_obs for k in splines}
+plt.figure()
+# plot residuals as small dots + a zero line
+for k in (3, 4, 5):
+    plt.scatter(t_obs, residuals[k], s=10, alpha=0.6, label=f"{k}-spline residual")
+plt.axhline(0.0, linewidth=1)
+plt.xlabel("Hour (observations)")
+plt.ylabel("Residual (°C)")
+plt.title("Residuals at Observation Points")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+What this shows
+
+    Cubic (k=3) is usually the safest default for weather signals.
+
+    Quartic/quintic can fit sharper features but may overfit noisy data unless the smoothing factor is tuned.
+
+    The first derivative (dT/dt) highlights fronts/rapid changes.
+
+    A CSV (spline_predictions.csv) is written with all predictions + derivatives for downstream processing (e.g., QC, blending, assimilation).
+
+Tweaks you might try
+
+    Reduce or increase s_val (smoothing) to see how noise vs. detail trade-off changes.
+
+    Swap the synthetic signal to pressure, humidity, or wind and repeat.
+
+    Compute cross-validated s (leave-one-out) for objective smoothing selection.
+
+    Use the derivatives to flag rapid warming/cooling events for alerts.
+
+
+ChatGPT can make mistakes. Check important info.
